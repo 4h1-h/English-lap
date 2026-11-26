@@ -4,14 +4,42 @@
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
+function resolveApiKey(clientKey) {
+  const direct =
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY;
+  if (direct && String(direct).trim()) {
+    return String(direct).trim();
+  }
+
+  // Fallback: scan process.env in case the variable was named differently (e.g. API_KEY, gemini, etc.)
+  for (const [k, v] of Object.entries(process.env || {})) {
+    if (typeof v === 'string' && v.trim().startsWith('AIza')) {
+      return v.trim();
+    }
+    if (/gemini/i.test(k) && typeof v === 'string' && v.trim().length > 20) {
+      return v.trim();
+    }
+    if (typeof k === 'string' && k.trim().startsWith('AIza')) {
+      return k.trim();
+    }
+  }
+
+  return clientKey ? String(clientKey).trim() : '';
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const { contents, systemInstruction, generationConfig, apiKey: clientKey, model } = req.body || {};
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || clientKey;
+    const parsedBody =
+      typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+    const { contents, systemInstruction, generationConfig, apiKey: clientKey, model } =
+      parsedBody;
+    const apiKey = resolveApiKey(clientKey);
 
     if (!apiKey) {
       return res.status(400).json({
