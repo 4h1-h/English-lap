@@ -1,7 +1,7 @@
 // Vercel Serverless Function: /api/gemini
 // Proxies requests to Google Gemini API using process.env.GEMINI_API_KEY
 
-const MODELS_TO_TRY = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+const MODELS_TO_TRY = ['gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-flash'];
 
 function resolveApiKey(clientKey) {
   const direct =
@@ -63,7 +63,9 @@ export default async function handler(req, res) {
       payload.generationConfig = generationConfig;
     }
 
-    const models = model ? [model, ...MODELS_TO_TRY.filter((m) => m !== model)] : MODELS_TO_TRY;
+    const models = model
+      ? [model, ...MODELS_TO_TRY.filter((m) => m !== model)]
+      : MODELS_TO_TRY;
     let lastErrorData = null;
     let lastStatus = 500;
 
@@ -82,9 +84,15 @@ export default async function handler(req, res) {
 
       lastErrorData = data;
       lastStatus = response.status;
+      // Only continue trying fallback models if the error was 404 (model not found/deprecated)
+      if (response.status !== 404) {
+        break;
+      }
     }
 
-    return res.status(lastStatus).json({
+    // Use 502 instead of 404 when upstream model isn't found so the client knows /api/gemini itself exists
+    const outStatus = lastStatus === 404 ? 502 : lastStatus;
+    return res.status(outStatus).json({
       error: lastErrorData?.error?.message || 'Gemini API request failed',
       details: lastErrorData,
     });

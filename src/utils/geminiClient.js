@@ -5,7 +5,7 @@
 import { createWordItem } from './wordFileParser';
 
 const STORAGE_GEMINI_KEY = 'esp_gemini_api_key_v1';
-const MODEL_NAME = 'gemini-2.5-flash';
+const MODEL_NAME = 'gemini-3.8-flash';
 
 export function getSavedGeminiKey() {
   try {
