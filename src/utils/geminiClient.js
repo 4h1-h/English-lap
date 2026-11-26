@@ -32,6 +32,7 @@ async function callGemini({ contents, systemInstruction, generationConfig }) {
   const clientKey = getSavedGeminiKey();
 
   // 1. Try Vercel Serverless Function (/api/gemini) first
+  let shouldFallbackToDirect = false;
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
@@ -46,24 +47,31 @@ async function callGemini({ contents, systemInstruction, generationConfig }) {
     });
 
     const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
+    if (res.status === 404 || !contentType.includes('application/json')) {
+      // Running locally on Vite dev server without /api/gemini
+      shouldFallbackToDirect = true;
+    } else {
       const data = await res.json();
       if (res.ok && data?.candidates) {
         return extractTextFromResponse(data);
       }
-      if (data?.error === 'MISSING_API_KEY' && !clientKey) {
-        throw new Error('MISSING_API_KEY');
-      }
-      if (!res.ok && res.status !== 404) {
-        throw new Error(data?.error || 'فشل الاتصال بخدمة Gemini API');
+      if (data?.error === 'MISSING_API_KEY') {
+        if (clientKey) {
+          shouldFallbackToDirect = true;
+        } else {
+          throw new Error(data?.message || 'MISSING_API_KEY');
+        }
+      } else {
+        throw new Error(data?.error || data?.message || 'فشل الاتصال بخدمة Gemini API');
       }
     }
   } catch (err) {
-    if (err?.message === 'MISSING_API_KEY') throw err;
-    // If /api/gemini is not available (e.g. local Vite dev server), fall through to direct call
+    if (!shouldFallbackToDirect) {
+      throw err;
+    }
   }
 
-  // 2. Fallback: Direct browser call using clientKey
+  // 2. Fallback: Direct browser call using clientKey (for local Vite dev)
   if (!clientKey) {
     throw new Error('MISSING_API_KEY');
   }

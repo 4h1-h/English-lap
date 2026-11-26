@@ -1,8 +1,7 @@
 // Vercel Serverless Function: /api/gemini
-// Proxies requests to Google Gemini API using process.env.GEMINI_API_KEY (or client-provided key)
-// so the site owner can store GEMINI_API_KEY securely in Vercel Environment Variables.
+// Proxies requests to Google Gemini API using process.env.GEMINI_API_KEY
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const MODELS_TO_TRY = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
 function resolveApiKey(clientKey) {
   const direct =
@@ -42,14 +41,16 @@ export default async function handler(req, res) {
     const apiKey = resolveApiKey(clientKey);
 
     if (!apiKey) {
+      const similarEnvKeys = Object.keys(process.env || {}).filter(
+        (k) => /gemini|google|key/i.test(k) && !/^VERCEL|^AWS|^ npm/i.test(k)
+      );
       return res.status(400).json({
         error: 'MISSING_API_KEY',
-        message: 'لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات Vercel أو داخل الموقع.',
+        message: `لم يصل مفتاح GEMINI_API_KEY إلى خادم Vercel بعد (${
+          similarEnvKeys.length ? `المتغيرات الموجودة: ${similarEnvKeys.join(', ')}` : 'لا يوجد متغير محفوظ في Production'
+        }). تأكد من الضغط على Save في صفحة Environment Variables ثم عمل Redeploy.`,
       });
     }
-
-    const targetModel = model || DEFAULT_MODEL;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
     const payload = { contents };
     if (systemInstruction) {
@@ -62,22 +63,31 @@ export default async function handler(req, res) {
       payload.generationConfig = generationConfig;
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const models = model ? [model, ...MODELS_TO_TRY.filter((m) => m !== model)] : MODELS_TO_TRY;
+    let lastErrorData = null;
+    let lastStatus = 500;
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: data?.error?.message || 'Gemini API request failed',
-        details: data,
+    for (const targetModel of models) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
+
+      const data = await response.json();
+      if (response.ok && data?.candidates) {
+        return res.status(200).json(data);
+      }
+
+      lastErrorData = data;
+      lastStatus = response.status;
     }
 
-    return res.status(200).json(data);
+    return res.status(lastStatus).json({
+      error: lastErrorData?.error?.message || 'Gemini API request failed',
+      details: lastErrorData,
+    });
   } catch (err) {
     return res.status(500).json({
       error: err?.message || 'Internal server error communicating with Gemini API',
