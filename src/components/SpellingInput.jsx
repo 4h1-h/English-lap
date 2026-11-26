@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence, useAnimationControls } from 'framer-motion';
-import { Lightbulb, Check, Delete, RotateCcw } from 'lucide-react';
+import { Lightbulb, Check, Delete, RotateCcw, Sparkles, Loader2, Brain } from 'lucide-react';
 
 // Deterministic shuffle for letter bank tiles per word
 function scrambleWord(word) {
@@ -29,6 +29,10 @@ const SpellingInput = forwardRef(function SpellingInput(
     disabled,
     showLiveBoxes = true,
     showLetterBank = true,
+    lastWrongAttempt = '',
+    aiExplanation = '',
+    aiCoachLoading = false,
+    onAskAICoach,
   },
   ref
 ) {
@@ -197,17 +201,60 @@ const SpellingInput = forwardRef(function SpellingInput(
       )}
 
       <AnimatePresence>
-        {status === 'wrong' && (
-          <motion.p
+        {(status === 'wrong' || lastWrongAttempt) && (
+          <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             dir="rtl"
-            className="mt-2 text-center text-sm font-medium text-rose-300 flex items-center justify-center gap-1.5"
+            className="mt-2 space-y-2.5"
           >
-            <Lightbulb className="w-4 h-4 shrink-0" />
-            <span>الإملاء غير مطابق بعد — لاحظ الحروف الملونة بالأحمر أو استخدم زر &quot;كشف حرف&quot;!</span>
-          </motion.p>
+            {status === 'wrong' && (
+              <p className="text-center text-sm font-medium text-rose-300 flex items-center justify-center gap-1.5">
+                <Lightbulb className="w-4 h-4 shrink-0" />
+                <span>
+                  الإملاء غير مطابق بعد — استمع للفرق الصوتي أو اطلب شرح الخطأ من المعلم الذكي!
+                </span>
+              </p>
+            )}
+
+            {lastWrongAttempt && !aiExplanation && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  disabled={aiCoachLoading}
+                  onClick={onAskAICoach}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-200 text-xs sm:text-sm font-bold hover:bg-amber-500/25 transition-all disabled:opacity-50"
+                >
+                  {aiCoachLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-300" />
+                      <span>المعلم الذكي يحلل خطأك الإملائي...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-4 h-4 text-amber-300" />
+                      <span>
+                        لماذا أخطأت في &quot;{lastWrongAttempt}&quot;؟ اشرح لي بـ Gemini ✨
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {aiExplanation && (
+              <div className="rounded-2xl bg-gradient-to-br from-amber-500/15 via-zinc-900/70 to-emerald-500/10 border border-amber-400/35 p-4 text-right space-y-1.5">
+                <p className="text-xs font-extrabold text-amber-300 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4" />
+                  <span>نصيحة المعلم الذكي (Gemini AI Coach):</span>
+                </p>
+                <p className="text-xs sm:text-sm text-zinc-100 leading-relaxed whitespace-pre-line">
+                  {aiExplanation}
+                </p>
+              </div>
+            )}
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

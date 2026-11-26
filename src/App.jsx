@@ -13,6 +13,11 @@ import HintPanel from './components/HintPanel';
 import SuccessModal from './components/SuccessModal';
 import StartOverlay from './components/StartOverlay';
 import WordManagerModal from './components/WordManagerModal';
+import MistakeReviewModal from './components/MistakeReviewModal';
+import {
+  explainSpellingMistake,
+  generateNewSentenceForWord,
+} from './utils/geminiClient';
 
 const STORAGE_WORDS_KEY = 'esp_custom_words_v1';
 const STORAGE_SOURCE_KEY = 'esp_custom_source_v1';
@@ -65,6 +70,14 @@ export default function App() {
   const [activeWords, setActiveWords] = useState(loadInitialWords);
   const [sourceLabel, setSourceLabel] = useState(loadInitialSourceLabel);
   const [wordManagerOpen, setWordManagerOpen] = useState(false);
+  const [mistakeReviewOpen, setMistakeReviewOpen] = useState(false);
+  const [missedWords, setMissedWords] = useState([]);
+
+  // Per-question AI state
+  const [lastWrongAttempt, setLastWrongAttempt] = useState('');
+  const [aiExplanation, setAiExplanation] = useState('');
+  const [aiCoachLoading, setAiCoachLoading] = useState(false);
+  const [generatingSentence, setGeneratingSentence] = useState(false);
 
   const speech = useSpeech();
   const { speakSentence, speakWordSlow, speakLetters, speakTypo, muted } = speech;
@@ -128,6 +141,8 @@ export default function App() {
       setStatus('idle');
       setValue('');
       setWordRevealed(false);
+      setLastWrongAttempt('');
+      setAiExplanation('');
     },
     [difficulty]
   );
@@ -146,6 +161,8 @@ export default function App() {
     setStatus('idle');
     setValue('');
     setWordRevealed(false);
+    setLastWrongAttempt('');
+    setAiExplanation('');
   }, [difficulty]);
 
   const handleDifficultyChange = useCallback(
@@ -160,6 +177,8 @@ export default function App() {
       setStatus('idle');
       setValue('');
       setWordRevealed(false);
+      setLastWrongAttempt('');
+      setAiExplanation('');
     },
     [activeWords]
   );
@@ -200,6 +219,8 @@ export default function App() {
     setStatus('idle');
     setValue('');
     setWordRevealed(false);
+    setLastWrongAttempt('');
+    setAiExplanation('');
     if (index + 1 >= pool.length) {
       // session complete — reshuffle a fresh one
       setPool(createPool(difficulty, activeWords));
@@ -246,12 +267,87 @@ export default function App() {
       setStatus('wrong');
       setStreak(0);
       setShakeKey((k) => k + 1);
+      setLastWrongAttempt(attempt);
+      setAiExplanation('');
+      // Record this item in missedWords for Feature 5 (Adaptive Mistake Review)
+      setMissedWords((prev) => {
+        if (prev.some((w) => w.word.toLowerCase() === item.word.toLowerCase())) {
+          return prev;
+        }
+        return [...prev, item];
+      });
       if (!muted) speakTypo(attempt);
       setTimeout(() => {
         setStatus((s) => (s === 'wrong' ? 'idle' : s));
         inputRef.current?.focus();
       }, 1600);
     }
+  };
+
+  // Feature 3: Ask Gemini AI Spelling Coach why the attempt was wrong
+  const handleAskAICoach = async () => {
+    if (!item || !lastWrongAttempt) return;
+    setAiCoachLoading(true);
+    try {
+      const explanation = await explainSpellingMistake({
+        targetWord: item.word,
+        userAttempt: lastWrongAttempt,
+        arWord: item.arWord,
+      });
+      setAiExplanation(explanation);
+    } catch (err) {
+      if (err?.message === 'MISSING_API_KEY') {
+        setWordManagerOpen(true);
+      } else {
+        setAiExplanation(err?.message || 'تعذر الاتصال بالمعلم الذكي حالياً.');
+      }
+    } finally {
+      setAiCoachLoading(false);
+    }
+  };
+
+  // Feature 4: Generate a brand-new context sentence for the current word via Gemini
+  const handleGenerateNewSentence = async () => {
+    if (!item || generatingSentence) return;
+    setGeneratingSentence(true);
+    try {
+      const updated = await generateNewSentenceForWord({
+        word: item.word,
+        arWord: item.arWord,
+        currentSentence: item.sentence,
+      });
+      setPool((prev) =>
+        prev.map((entry, idx) =>
+          idx === index
+            ? {
+                ...entry,
+                sentence: updated.sentence,
+                blank: updated.blank,
+                ar: updated.ar,
+              }
+            : entry
+        )
+      );
+      speakSentence(updated.sentence);
+    } catch (err) {
+      if (err?.message === 'MISSING_API_KEY') {
+        setWordManagerOpen(true);
+      }
+    } finally {
+      setGeneratingSentence(false);
+    }
+  };
+
+  // Feature 5: Start a targeted review session on missed words
+  const handleStartMistakeReviewSession = (reviewItems) => {
+    if (!reviewItems || reviewItems.length === 0) return;
+    setPool(reviewItems);
+    setIndex(0);
+    setStatus('idle');
+    setValue('');
+    setWordRevealed(false);
+    setLastWrongAttempt('');
+    setAiExplanation('');
   };
 
   const accuracy = useMemo(
@@ -286,6 +382,8 @@ export default function App() {
           onDifficultyChange={handleDifficultyChange}
           onOpenWordManager={() => setWordManagerOpen(true)}
           totalWordsCount={activeWords.length}
+          missedCount={missedWords.length}
+          onOpenMistakeReview={() => setMistakeReviewOpen(true)}
         />
 
         <ProgressBar current={Math.min(index + 1, pool.length)} total={pool.length} />
@@ -309,6 +407,8 @@ export default function App() {
               onReplaySentence={() => speakSentence(item.sentence)}
               onReplayWord={() => speakWordSlow(item.word)}
               onSpellLetters={() => speakLetters(item.word)}
+              onGenerateNewSentence={handleGenerateNewSentence}
+              generatingSentence={generatingSentence}
               disabled={status === 'correct'}
             />
 
@@ -331,6 +431,10 @@ export default function App() {
               disabled={status === 'correct'}
               showLiveBoxes={showLiveBoxes}
               showLetterBank={showLetterBank}
+              lastWrongAttempt={lastWrongAttempt}
+              aiExplanation={aiExplanation}
+              aiCoachLoading={aiCoachLoading}
+              onAskAICoach={handleAskAICoach}
             />
 
             <HintPanel
@@ -362,6 +466,22 @@ export default function App() {
             onUpdateWords={handleUpdateWords}
             onResetToDefault={handleResetWords}
             onClose={() => setWordManagerOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mistakeReviewOpen && (
+          <MistakeReviewModal
+            missedWords={missedWords}
+            onStartReviewSession={handleStartMistakeReviewSession}
+            onClearMistakes={() => setMissedWords([])}
+            onSpeakText={(txt) => speakSentence(txt)}
+            onOpenApiKeySettings={() => {
+              setMistakeReviewOpen(false);
+              setWordManagerOpen(true);
+            }}
+            onClose={() => setMistakeReviewOpen(false)}
           />
         )}
       </AnimatePresence>

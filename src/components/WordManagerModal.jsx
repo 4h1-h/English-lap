@@ -11,6 +11,11 @@ import {
   CheckCircle2,
   AlertCircle,
   Trash2,
+  Sparkles,
+  Image as ImageIcon,
+  KeyRound,
+  Loader2,
+  Wand2,
 } from 'lucide-react';
 import {
   createWordItem,
@@ -18,6 +23,25 @@ import {
   exportWordsToCSV,
   exportWordsToJSON,
 } from '../utils/wordFileParser';
+import {
+  getSavedGeminiKey,
+  saveGeminiKey,
+  extractWordsFromStudyMaterial,
+  generateWordsByTopic,
+} from '../utils/geminiClient';
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function WordManagerModal({
   words,
@@ -27,8 +51,24 @@ export default function WordManagerModal({
   onClose,
 }) {
   const fileInputRef = useRef(null);
+  const noteFileInputRef = useRef(null);
   const [importMode, setImportMode] = useState('replace'); // 'replace' | 'merge'
   const [notice, setNotice] = useState(null); // { type: 'success' | 'error', text: string }
+
+  // Gemini API Key state
+  const [apiKey, setApiKey] = useState(getSavedGeminiKey);
+  const [showKeyBox, setShowKeyBox] = useState(() => !getSavedGeminiKey());
+
+  // AI Feature 1: Extract from study note (Image / PDF / Text)
+  const [noteFile, setNoteFile] = useState(null);
+  const [noteText, setNoteText] = useState('');
+  const [extractLoading, setExtractLoading] = useState(false);
+
+  // AI Feature 2: Generate by Topic
+  const [topic, setTopic] = useState('');
+  const [topicCount, setTopicCount] = useState(15);
+  const [topicLevel, setTopicLevel] = useState('all');
+  const [topicLoading, setTopicLoading] = useState(false);
 
   // Quick manual add form state
   const [newWord, setNewWord] = useState('');
@@ -37,6 +77,129 @@ export default function WordManagerModal({
   const [newArWord, setNewArWord] = useState('');
   const [newLevel, setNewLevel] = useState('easy');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleSaveKey = (val) => {
+    setApiKey(val);
+    saveGeminiKey(val);
+  };
+
+  const applyImportedWords = (parsed, label) => {
+    if (importMode === 'replace') {
+      onUpdateWords(parsed, label);
+      setNotice({
+        type: 'success',
+        text: `تم تجهيز ${parsed.length} كلمة بنجاح من (${label})!`,
+      });
+    } else {
+      const existingSet = new Set(words.map((w) => w.word.toLowerCase()));
+      const uniqueNew = parsed.filter((w) => !existingSet.has(w.word.toLowerCase()));
+      const merged = [...uniqueNew, ...words];
+      onUpdateWords(merged, `مدمج: ${label}`);
+      setNotice({
+        type: 'success',
+        text: `تم دمج ${uniqueNew.length} كلمة جديدة من (${label}) — الإجمالي الآن ${merged.length} كلمة.`,
+      });
+    }
+  };
+
+  const handleAIError = (err) => {
+    if (err?.message === 'MISSING_API_KEY') {
+      setShowKeyBox(true);
+      setNotice({
+        type: 'error',
+        text: 'يرجى إدخال مفتاح Gemini API في الحقل أدناه (أو إضافته في إعدادات Vercel باسم GEMINI_API_KEY).',
+      });
+    } else {
+      setNotice({
+        type: 'error',
+        text: err?.message || 'حدث خطأ أثناء الاتصال بـ Gemini AI.',
+      });
+    }
+  };
+
+  // Feature 1 handler: Extract from image/PDF/text notebook
+  const handleExtractFromNote = async () => {
+    if (!noteFile && !noteText.trim()) {
+      setNotice({
+        type: 'error',
+        text: 'يرجى اختيار صورة/ملف PDF للمذكرة أو لصق نص المذكرة أولاً.',
+      });
+      return;
+    }
+
+    setExtractLoading(true);
+    setNotice(null);
+    try {
+      let fileBase64 = null;
+      let mimeType = null;
+      if (noteFile) {
+        fileBase64 = await fileToBase64(noteFile);
+        mimeType = noteFile.type || 'image/jpeg';
+      }
+      const generated = await extractWordsFromStudyMaterial({
+        fileBase64,
+        mimeType,
+        rawText: noteText,
+        count: 25,
+      });
+
+      if (generated.length === 0) {
+        setNotice({
+          type: 'error',
+          text: 'لم يتمكن الذكاء الاصطناعي من العثور على كلمات إنجليزية في هذه المذكرة.',
+        });
+        return;
+      }
+
+      applyImportedWords(
+        generated,
+        noteFile ? `مذكرة AI: ${noteFile.name}` : 'مذكرة مستخرجة بـ Gemini AI'
+      );
+      setNoteFile(null);
+      setNoteText('');
+    } catch (err) {
+      handleAIError(err);
+    } finally {
+      setExtractLoading(false);
+    }
+  };
+
+  // Feature 2 handler: Generate words by topic
+  const handleGenerateTopic = async (e) => {
+    e.preventDefault();
+    if (!topic.trim()) {
+      setNotice({
+        type: 'error',
+        text: 'يرجى كتابة موضوع لتوليد الكلمات (مثل: السفر والمطارات، أو كلمات الوحدة الثانية).',
+      });
+      return;
+    }
+
+    setTopicLoading(true);
+    setNotice(null);
+    try {
+      const generated = await generateWordsByTopic({
+        topic: topic.trim(),
+        count: Number(topicCount) || 15,
+        level: topicLevel,
+      });
+
+      if (generated.length === 0) {
+        setNotice({
+          type: 'error',
+          text: 'لم يتم توليد كلمات، حاول توضيح اسم الموضوع.',
+        });
+        return;
+      }
+
+      applyImportedWords(generated, `موضوع AI: ${topic.trim()}`);
+      setTopic('');
+    } catch (err) {
+      handleAIError(err);
+    } finally {
+      setTopicLoading(false);
+    }
+  };
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
@@ -51,23 +214,7 @@ export default function WordManagerModal({
         });
         return;
       }
-
-      if (importMode === 'replace') {
-        onUpdateWords(parsed, `ملف خارجي: ${file.name}`);
-        setNotice({
-          type: 'success',
-          text: `تم استيراد ${parsed.length} كلمة من "${file.name}" بنجاح (استبدال القائمة).`,
-        });
-      } else {
-        const existingSet = new Set(words.map((w) => w.word.toLowerCase()));
-        const uniqueNew = parsed.filter((w) => !existingSet.has(w.word.toLowerCase()));
-        const merged = [...uniqueNew, ...words];
-        onUpdateWords(merged, `مدمج مع: ${file.name}`);
-        setNotice({
-          type: 'success',
-          text: `تم دمج ${uniqueNew.length} كلمة جديدة من "${file.name}" (الإجمالي: ${merged.length} كلمة).`,
-        });
-      }
+      applyImportedWords(parsed, `ملف خارجي: ${file.name}`);
     } catch {
       setNotice({
         type: 'error',
@@ -147,26 +294,77 @@ export default function WordManagerModal({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.95 }}
         dir="rtl"
-        className="glass-card w-full max-w-3xl p-5 sm:p-7 space-y-5 max-h-[90vh] overflow-y-auto"
+        className="glass-card w-full max-w-3xl p-5 sm:p-7 space-y-5 max-h-[92vh] overflow-y-auto"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-emerald-300">
-              إدارة الكلمات والملف الخارجي (Excel / CSV)
+            <h2 className="text-xl sm:text-2xl font-extrabold text-emerald-300 flex items-center gap-2">
+              <Sparkles className="w-6 h-6 text-amber-300" />
+              <span>إدارة الكلمات والذكاء الاصطناعي (Gemini AI & Excel)</span>
             </h2>
             <p className="text-xs sm:text-sm text-zinc-400 mt-1">
               المصدر الحالي: <span className="text-cyan-300 font-semibold">{sourceLabel}</span> ({words.length} كلمة)
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-400 hover:text-white hover:bg-white/10"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowKeyBox((s) => !s)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-xs font-bold hover:bg-amber-500/25"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>مفتاح Gemini API</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-400 hover:text-white hover:bg-white/10"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        {/* Optional Gemini API Key Configuration Box */}
+        {showKeyBox && (
+          <div className="rounded-2xl bg-amber-500/10 border border-amber-400/30 p-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs sm:text-sm font-bold text-amber-200 flex items-center gap-1.5">
+                <KeyRound className="w-4 h-4 text-amber-300" />
+                إعداد مفتاح Gemini API (يُحفظ في متصفحك تلقائياً):
+              </span>
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-cyan-300 underline hover:text-cyan-200"
+              >
+                احصل على مفتاح مجاني من Google AI Studio ↗
+              </a>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                dir="ltr"
+                value={apiKey}
+                onChange={(e) => handleSaveKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="flex-1 rounded-xl bg-zinc-950/70 border border-white/15 px-3.5 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-400"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKeyBox(false)}
+                className="px-4 py-2 rounded-xl bg-amber-400 text-zinc-950 font-bold text-xs hover:bg-amber-300"
+              >
+                تم
+              </button>
+            </div>
+            <p className="text-[11px] text-zinc-400">
+              * إذا قمت بإضافة <code dir="ltr">GEMINI_API_KEY</code> داخل إعدادات Vercel (Environment Variables)، فلن يحتاج زوار الموقع لإدخال أي مفتاح هنا.
+            </p>
+          </div>
+        )}
 
         {/* Status notice */}
         {notice && (
@@ -186,46 +384,163 @@ export default function WordManagerModal({
           </div>
         )}
 
-        {/* Section 1: External File Import & Export (Excel CSV / JSON) */}
-        <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-4 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
-                <span>1. القراءة من ملف خارجي (الأسهل: ملف Excel بصيغة CSV)</span>
-              </h3>
-              <p className="text-xs text-zinc-400 mt-1">
-                حمّل ملف الكلمات بصيغة Excel (CSV)، افتحه وعدّله أو أضف كلماتك في برنامج Excel، ثم ارفعه هنا بضغطة زر!
-              </p>
-            </div>
+        {/* Shared Import Mode Selector */}
+        <div className="flex flex-wrap items-center gap-2 text-xs bg-white/[0.03] border border-white/10 rounded-2xl p-3">
+          <span className="text-zinc-300 font-bold">طريقة إضافة الكلمات الجديدة:</span>
+          <button
+            type="button"
+            onClick={() => setImportMode('replace')}
+            className={`px-3 py-1.5 rounded-xl font-semibold border transition-all ${
+              importMode === 'replace'
+                ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                : 'bg-white/5 border-white/10 text-zinc-400'
+            }`}
+          >
+            التدرب على الكلمات الجديدة فقط (استبدال)
+          </button>
+          <button
+            type="button"
+            onClick={() => setImportMode('merge')}
+            className={`px-3 py-1.5 rounded-xl font-semibold border transition-all ${
+              importMode === 'merge'
+                ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
+                : 'bg-white/5 border-white/10 text-zinc-400'
+            }`}
+          >
+            دمجها مع الكلمات الحالية
+          </button>
+        </div>
+
+        {/* AI FEATURE 1: Extract Words from Notebook Image / PDF / Text */}
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-500/10 via-zinc-900/40 to-cyan-500/10 border border-emerald-400/30 p-4 space-y-3">
+          <h3 className="text-base font-bold text-emerald-200 flex items-center gap-2">
+            <ImageIcon className="w-5 h-5 text-emerald-300" />
+            <span>1. استخراج الكلمات من صورة أو ملف المذكرة بالذكاء الاصطناعي 📸📄</span>
+          </h3>
+          <p className="text-xs text-zinc-300">
+            ارفع صورة صفحة من مذكرتك أو ملف PDF (أو الصق نصاً من المذكرة)، وسيقوم Gemini باستخراج الكلمات وتأليف جمل إنجليزية وترجمتها للعربية تلقائياً!
+          </p>
+
+          <input
+            ref={noteFileInputRef}
+            type="file"
+            accept="image/*,application/pdf"
+            onChange={(e) => setNoteFile(e.target.files?.[0] || null)}
+            className="hidden"
+          />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => noteFileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-zinc-100 text-xs sm:text-sm font-bold hover:bg-white/15"
+            >
+              <Upload className="w-4 h-4 text-emerald-300" />
+              <span>{noteFile ? `تم اختيار: ${noteFile.name}` : 'اختر صورة أو PDF للمذكرة'}</span>
+            </button>
+            {noteFile && (
+              <button
+                type="button"
+                onClick={() => setNoteFile(null)}
+                className="text-xs text-rose-300 underline"
+              >
+                إلغاء الملف
+              </button>
+            )}
           </div>
 
-          {/* Import mode selector */}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-zinc-400 font-semibold">عند رفع ملف خارجي:</span>
-            <button
-              type="button"
-              onClick={() => setImportMode('replace')}
-              className={`px-3 py-1.5 rounded-xl font-semibold border transition-all ${
-                importMode === 'replace'
-                  ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
-                  : 'bg-white/5 border-white/10 text-zinc-400'
-              }`}
+          <textarea
+            rows={2}
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            placeholder="أو الصق هنا أي نص أو قائمة كلمات من المذكرة..."
+            className="w-full rounded-xl bg-zinc-950/60 border border-white/15 px-3.5 py-2.5 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
+          />
+
+          <button
+            type="button"
+            disabled={extractLoading}
+            onClick={handleExtractFromNote}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-zinc-950 font-extrabold text-sm hover:from-emerald-400 hover:to-teal-400 transition-all disabled:opacity-50"
+          >
+            {extractLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>جاري تحليل المذكرة وتوليد الجمل والترجمات...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>استخرج الكلمات وجهّز الاختبار بالذكاء الاصطناعي ✨</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* AI FEATURE 2: Generate Words by Topic */}
+        <form
+          onSubmit={handleGenerateTopic}
+          className="rounded-2xl bg-gradient-to-br from-cyan-500/10 via-zinc-900/40 to-indigo-500/10 border border-cyan-400/30 p-4 space-y-3"
+        >
+          <h3 className="text-base font-bold text-cyan-200 flex items-center gap-2">
+            <Wand2 className="w-5 h-5 text-cyan-300" />
+            <span>2. توليد كلمات وجمل حول أي موضوع تطلبه ✨</span>
+          </h3>
+
+          <div className="grid sm:grid-cols-4 gap-2.5">
+            <input
+              type="text"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="اكتب الموضوع (مثل: السفر والمطارات، الطب، الوحدة الثالثة...)"
+              className="sm:col-span-2 rounded-xl bg-zinc-950/60 border border-white/15 px-3.5 py-2.5 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-cyan-400"
+            />
+            <select
+              value={topicCount}
+              onChange={(e) => setTopicCount(Number(e.target.value))}
+              className="rounded-xl bg-zinc-900 border border-white/15 px-3 py-2.5 text-xs sm:text-sm text-zinc-100 outline-none focus:border-cyan-400"
             >
-              التدرب على كلمات الملف المرفوع فقط (استبدال)
-            </button>
-            <button
-              type="button"
-              onClick={() => setImportMode('merge')}
-              className={`px-3 py-1.5 rounded-xl font-semibold border transition-all ${
-                importMode === 'merge'
-                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
-                  : 'bg-white/5 border-white/10 text-zinc-400'
-              }`}
+              <option value={10}>10 كلمات</option>
+              <option value={15}>15 كلمة</option>
+              <option value={20}>20 كلمة</option>
+            </select>
+            <select
+              value={topicLevel}
+              onChange={(e) => setTopicLevel(e.target.value)}
+              className="rounded-xl bg-zinc-900 border border-white/15 px-3 py-2.5 text-xs sm:text-sm text-zinc-100 outline-none focus:border-cyan-400"
             >
-              دمج كلمات الملف مع الكلمات الحالية
-            </button>
+              <option value="all">جميع المستويات</option>
+              <option value="easy">سهل (Easy)</option>
+              <option value="medium">متوسط (Medium)</option>
+              <option value="hard">صعب (Hard)</option>
+            </select>
           </div>
+
+          <button
+            type="submit"
+            disabled={topicLoading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 text-zinc-950 font-extrabold text-sm hover:from-cyan-400 hover:to-teal-400 transition-all disabled:opacity-50"
+          >
+            {topicLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>جاري تأليف الكلمات والجمل مع الترجمة...</span>
+              </>
+            ) : (
+              <>
+                <Wand2 className="w-4 h-4" />
+                <span>توليد جلسة تدريبية حول هذا الموضوع ✨</span>
+              </>
+            )}
+          </button>
+        </form>
+
+        {/* Section 3: External File Import & Export (Excel CSV / JSON) */}
+        <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-4 space-y-3">
+          <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
+            <span>3. استيراد أو تصدير ملف إكسيل (CSV / JSON)</span>
+          </h3>
 
           <input
             ref={fileInputRef}
@@ -239,16 +554,16 @@ export default function WordManagerModal({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-zinc-950 font-extrabold text-sm hover:from-emerald-400 hover:to-teal-400 transition-all shadow-lg"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 font-bold text-xs sm:text-sm hover:bg-emerald-500/30 transition-all"
             >
               <Upload className="w-4 h-4" />
-              <span>رفع ملف كلمات (CSV / JSON)</span>
+              <span>رفع ملف (CSV / JSON)</span>
             </button>
 
             <button
               type="button"
               onClick={handleDownloadCSV}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-cyan-500/15 border border-cyan-400/35 text-cyan-200 font-bold text-sm hover:bg-cyan-500/25 transition-all"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/35 text-cyan-200 font-bold text-xs sm:text-sm hover:bg-cyan-500/25 transition-all"
             >
               <Download className="w-4 h-4" />
               <span>تحميل ملف Excel (words.csv)</span>
@@ -257,30 +572,22 @@ export default function WordManagerModal({
             <button
               type="button"
               onClick={handleDownloadJSON}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/15 text-zinc-200 font-bold text-sm hover:bg-white/10 transition-all"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.06] border border-white/15 text-zinc-200 font-bold text-xs sm:text-sm hover:bg-white/10 transition-all"
             >
               <FileJson className="w-4 h-4 text-amber-300" />
               <span>تحميل بصيغة JSON</span>
             </button>
           </div>
-
-          <p className="text-[11px] text-zinc-400 leading-relaxed">
-            💡 <strong>ملاحظة:</strong> يوجد أيضاً ملف جاهز داخل مجلد المشروع في المسار{' '}
-            <code dir="ltr" className="px-1.5 py-0.5 rounded bg-white/10 text-emerald-300">
-              public/words.csv
-            </code>{' '}
-            يقرأه البرنامج تلقائياً عند التشغيل.
-          </p>
         </div>
 
-        {/* Section 2: Direct In-App Word Addition */}
+        {/* Section 4: Direct In-App Word Addition */}
         <form
           onSubmit={handleAddSingleWord}
           className="rounded-2xl bg-white/[0.04] border border-white/10 p-4 space-y-3"
         >
           <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
             <Plus className="w-5 h-5 text-cyan-300" />
-            <span>2. أو أضف كلمة جديدة مباشرة من هنا (بدون ملف)</span>
+            <span>4. إضافة كلمة واحدة يدوياً</span>
           </h3>
 
           <div className="grid sm:grid-cols-3 gap-2.5">
@@ -290,7 +597,7 @@ export default function WordManagerModal({
               value={newWord}
               onChange={(e) => setNewWord(e.target.value)}
               placeholder="الكلمة بالإنجليزية (مثل: computer)"
-              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
+              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
             />
             <input
               type="text"
@@ -298,12 +605,12 @@ export default function WordManagerModal({
               value={newArWord}
               onChange={(e) => setNewArWord(e.target.value)}
               placeholder="معنى الكلمة بالعربية (مثل: حاسوب)"
-              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
+              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
             />
             <select
               value={newLevel}
               onChange={(e) => setNewLevel(e.target.value)}
-              className="rounded-xl bg-zinc-900 border border-white/15 px-3.5 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-400"
+              className="rounded-xl bg-zinc-900 border border-white/15 px-3.5 py-2 text-xs sm:text-sm text-zinc-100 outline-none focus:border-emerald-400"
             >
               <option value="easy">سهل (Easy)</option>
               <option value="medium">متوسط (Medium)</option>
@@ -318,7 +625,7 @@ export default function WordManagerModal({
               value={newSentence}
               onChange={(e) => setNewSentence(e.target.value)}
               placeholder="الجملة الإنجليزية (مثل: I use my computer every day.)"
-              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
+              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
             />
             <input
               type="text"
@@ -326,20 +633,20 @@ export default function WordManagerModal({
               value={newAr}
               onChange={(e) => setNewAr(e.target.value)}
               placeholder="ترجمة الجملة بالعربية (مثل: أستخدم حاسوبي كل يوم.)"
-              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
+              className="rounded-xl bg-white/5 border border-white/15 px-3.5 py-2 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-400"
             />
           </div>
 
           <button
             type="submit"
-            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 font-bold text-sm hover:bg-cyan-500/30 transition-all flex items-center justify-center gap-1.5"
+            className="w-full sm:w-auto px-5 py-2 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 font-bold text-xs sm:text-sm hover:bg-cyan-500/30 transition-all flex items-center justify-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
             <span>إضافة الكلمة للقائمة</span>
           </button>
         </form>
 
-        {/* Section 3: Browse & Search Current Words + Reset */}
+        {/* Section 5: Browse & Search Current Words + Reset */}
         <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <input
@@ -365,7 +672,7 @@ export default function WordManagerModal({
             </button>
           </div>
 
-          <div className="max-h-48 overflow-y-auto divide-y divide-white/5 pr-1">
+          <div className="max-h-44 overflow-y-auto divide-y divide-white/5 pr-1">
             {filteredWords.slice(0, 60).map((item, idx) => (
               <div
                 key={`${item.word}-${idx}`}

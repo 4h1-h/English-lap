@@ -1,4 +1,4 @@
-import { Flame, Volume2, VolumeX, Target, Trophy, FolderOpen } from 'lucide-react';
+import { Flame, Volume2, VolumeX, Target, Trophy, FolderOpen, Sparkles } from 'lucide-react';
 import { difficulties } from '../data/words';
 
 const levelStyles = {
@@ -25,6 +25,8 @@ export default function Navbar({
   onDifficultyChange,
   onOpenWordManager,
   totalWordsCount,
+  missedCount = 0,
+  onOpenMistakeReview,
 }) {
   return (
     <header className="glass-card sticky top-3 z-30 px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3 sm:gap-4">
@@ -75,15 +77,30 @@ export default function Navbar({
         <span>{accuracy}%</span>
       </div>
 
-      {/* External File / Word Manager button */}
+      {/* External File & AI Word Manager button */}
       <button
         type="button"
         onClick={onOpenWordManager}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-400/35 text-emerald-200 hover:bg-emerald-500/25 text-xs sm:text-sm font-bold transition-all"
-        title="رفع أو تعديل ملف الكلمات الخارجي (Excel / CSV)"
+        title="إدارة الكلمات وتوليد المذكرات بالذكاء الاصطناعي"
       >
         <FolderOpen className="w-4 h-4 text-emerald-300" />
-        <span>ملف الكلمات ({totalWordsCount})</span>
+        <span>الكلمات و AI ({totalWordsCount})</span>
+      </button>
+
+      {/* AI Mistake Review button */}
+      <button
+        type="button"
+        onClick={onOpenMistakeReview}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs sm:text-sm font-bold transition-all ${
+          missedCount > 0
+            ? 'bg-rose-500/20 border-rose-400/40 text-rose-200 hover:bg-rose-500/30'
+            : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-200'
+        }`}
+        title="مراجعة الكلمات التي أخطأت فيها بالذكاء الاصطناعي"
+      >
+        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+        <span>مراجعة أخطائي ({missedCount})</span>
       </button>
 
       {/* Mute toggle */}
