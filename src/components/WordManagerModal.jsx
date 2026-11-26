@@ -13,7 +13,6 @@ import {
   Trash2,
   Sparkles,
   Image as ImageIcon,
-  KeyRound,
   Loader2,
   Wand2,
 } from 'lucide-react';
@@ -24,8 +23,6 @@ import {
   exportWordsToJSON,
 } from '../utils/wordFileParser';
 import {
-  getSavedGeminiKey,
-  saveGeminiKey,
   extractWordsFromStudyMaterial,
   generateWordsByTopic,
 } from '../utils/geminiClient';
@@ -55,10 +52,6 @@ export default function WordManagerModal({
   const [importMode, setImportMode] = useState('replace'); // 'replace' | 'merge'
   const [notice, setNotice] = useState(null); // { type: 'success' | 'error', text: string }
 
-  // Gemini API Key state
-  const [apiKey, setApiKey] = useState(getSavedGeminiKey);
-  const [showKeyBox, setShowKeyBox] = useState(() => !getSavedGeminiKey());
-
   // AI Feature 1: Extract from study note (Image / PDF / Text)
   const [noteFile, setNoteFile] = useState(null);
   const [noteText, setNoteText] = useState('');
@@ -77,11 +70,6 @@ export default function WordManagerModal({
   const [newArWord, setNewArWord] = useState('');
   const [newLevel, setNewLevel] = useState('easy');
   const [searchQuery, setSearchQuery] = useState('');
-
-  const handleSaveKey = (val) => {
-    setApiKey(val);
-    saveGeminiKey(val);
-  };
 
   const applyImportedWords = (parsed, label) => {
     if (importMode === 'replace') {
@@ -104,10 +92,9 @@ export default function WordManagerModal({
 
   const handleAIError = (err) => {
     if (err?.message === 'MISSING_API_KEY') {
-      setShowKeyBox(true);
       setNotice({
         type: 'error',
-        text: 'يرجى إدخال مفتاح Gemini API في الحقل أدناه (أو إضافته في إعدادات Vercel باسم GEMINI_API_KEY).',
+        text: 'يرجى التأكد من إضافة GEMINI_API_KEY في إعدادات Vercel ثم عمل Redeploy.',
       });
     } else {
       setNotice({
@@ -307,64 +294,14 @@ export default function WordManagerModal({
               المصدر الحالي: <span className="text-cyan-300 font-semibold">{sourceLabel}</span> ({words.length} كلمة)
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowKeyBox((s) => !s)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-xs font-bold hover:bg-amber-500/25"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>مفتاح Gemini API</span>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-400 hover:text-white hover:bg-white/10"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-400 hover:text-white hover:bg-white/10"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-
-        {/* Optional Gemini API Key Configuration Box */}
-        {showKeyBox && (
-          <div className="rounded-2xl bg-amber-500/10 border border-amber-400/30 p-4 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs sm:text-sm font-bold text-amber-200 flex items-center gap-1.5">
-                <KeyRound className="w-4 h-4 text-amber-300" />
-                إعداد مفتاح Gemini API (يُحفظ في متصفحك تلقائياً):
-              </span>
-              <a
-                href="https://aistudio.google.com/apikey"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-cyan-300 underline hover:text-cyan-200"
-              >
-                احصل على مفتاح مجاني من Google AI Studio ↗
-              </a>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="password"
-                dir="ltr"
-                value={apiKey}
-                onChange={(e) => handleSaveKey(e.target.value)}
-                placeholder="AIzaSy..."
-                className="flex-1 rounded-xl bg-zinc-950/70 border border-white/15 px-3.5 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-400"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKeyBox(false)}
-                className="px-4 py-2 rounded-xl bg-amber-400 text-zinc-950 font-bold text-xs hover:bg-amber-300"
-              >
-                تم
-              </button>
-            </div>
-            <p className="text-[11px] text-zinc-400">
-              * إذا قمت بإضافة <code dir="ltr">GEMINI_API_KEY</code> داخل إعدادات Vercel (Environment Variables)، فلن يحتاج زوار الموقع لإدخال أي مفتاح هنا.
-            </p>
-          </div>
-        )}
 
         {/* Status notice */}
         {notice && (

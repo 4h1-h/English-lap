@@ -18,7 +18,6 @@ export default function MistakeReviewModal({
   onStartReviewSession,
   onClearMistakes,
   onSpeakText,
-  onOpenApiKeySettings,
   onClose,
 }) {
   const [loading, setLoading] = useState(false);
@@ -118,18 +117,9 @@ export default function MistakeReviewModal({
             </div>
 
             {error && (
-              <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-xs sm:text-sm font-semibold">
-                <span className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  {error}
-                </span>
-                <button
-                  type="button"
-                  onClick={onOpenApiKeySettings}
-                  className="px-3 py-1 rounded-lg bg-amber-400 text-zinc-950 font-bold text-xs"
-                >
-                  إعداد مفتاح Gemini
-                </button>
+              <div className="flex items-center gap-2 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-xs sm:text-sm font-semibold">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
               </div>
             )}
 
